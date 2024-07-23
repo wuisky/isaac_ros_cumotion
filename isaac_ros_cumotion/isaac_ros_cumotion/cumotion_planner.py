@@ -49,7 +49,7 @@ from std_msgs.msg import ColorRGBA
 import torch
 from trajectory_msgs.msg import JointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 class CumotionActionServer(Node):
@@ -78,6 +78,7 @@ class CumotionActionServer(Node):
         self.declare_parameter('urdf_path', rclpy.Parameter.Type.STRING)
         self.declare_parameter('enable_curobo_debug_mode', False)
         self.declare_parameter('override_moveit_scaling_factors', False)
+        self.declare_parameter('publish_robot_as_spheres', False)
         debug_mode = (
             self.get_parameter('enable_curobo_debug_mode').get_parameter_value().bool_value
         )
@@ -156,6 +157,10 @@ class CumotionActionServer(Node):
                     f'Service({esdf_service_name}) not available, waiting again...'
                 )
             self.__esdf_req = EsdfAndGradients.Request()
+        self.__publish_robot_as_spheres = (
+            self.get_parameter('publish_robot_as_spheres').get_parameter_value().bool_value
+        )
+
         self.warmup()
         self.__query_count = 0
         self.__tensor_args = self.motion_gen.tensor_args
@@ -163,6 +168,9 @@ class CumotionActionServer(Node):
             JointState, self.__joint_states_topic, self.js_callback, 10
         )
         self.__js_buffer = None
+
+        if self.__publish_robot_as_spheres:
+            self.__spheres_pub = self.create_publisher(MarkerArray, '/curobo/robot_spheres', 10)
 
     def js_callback(self, msg):
         self.__js_buffer = {
@@ -548,16 +556,55 @@ class CumotionActionServer(Node):
                 start_state = current_joint_state
 
         # attach object to end effector:
+        objs = []
         for obj in scene.robot_state.attached_collision_objects:
-            cumotion_objects, supported_objects = self.get_cumotion_collision_object(obj.object)
+            collision_objects, supported_objects = self.get_cumotion_collision_object(obj.object)
             if supported_objects:
-                ee_pose = self.motion_gen.compute_kinematics(start_state).ee_pose
-                self.motion_gen.attach_external_objects_to_robot(
-                    start_state,
-                    cumotion_objects,
-                    link_name=obj.link_name,
-                    world_objects_pose_offset=ee_pose,
-                )
+                objs.extend(collision_objects)
+        if objs:
+            self.get_logger().info(f'Attach object to link {obj.link_name}')
+            ee_pose = self.motion_gen.compute_kinematics(start_state).ee_pose
+            self.motion_gen.attach_external_objects_to_robot(
+                start_state,
+                objs,
+                surface_sphere_radius=0.005,
+                link_name=obj.link_name,
+                sphere_fit_type=SphereFitType.SAMPLE_SURFACE,
+                world_objects_pose_offset=ee_pose,
+            )
+
+        # publish marker
+        if self.__publish_robot_as_spheres:
+            sph_list = self.motion_gen.kinematics.get_robot_as_spheres(start_state.position)
+
+            if len(sph_list) != 0:
+                markers = MarkerArray()
+                for si, s in enumerate(sph_list[0]):
+                    if not np.any(np.isnan(s.position)):
+                        marker = Marker()
+                        marker.header.frame_id = self.__robot_base_frame
+                        marker.header.stamp = self.get_clock().now().to_msg()
+                        marker.type = 2  # sphere
+                        marker.id = 10000 + si
+                        marker.action = 0  # add
+                        marker.pose.position.x = float(s.position[0])
+                        marker.pose.position.y = float(s.position[1])
+                        marker.pose.position.z = float(s.position[2])
+                        marker.pose.orientation.w = 1.0
+                        marker.pose.orientation.x = 0.0
+                        marker.pose.orientation.y = 0.0
+                        marker.pose.orientation.z = 0.0
+                        marker.color.r = 1.0
+                        marker.color.g = 1.0
+                        marker.color.b = 0.0
+                        marker.color.a = 0.5
+                        marker.scale.x = float(s.radius) * 2
+                        marker.scale.y = float(s.radius) * 2
+                        marker.scale.z = float(s.radius) * 2
+                        marker.lifetime = rclpy.duration.Duration(seconds=0.0).to_msg()  # forever
+                        markers.markers.append(marker)
+                self.__spheres_pub.publish(markers)
+                self.get_logger().info('pub markers')
 
         if len(plan_req.goal_constraints[0].joint_constraints) > 0:
             self.get_logger().info('Calculating goal pose from Joint target')
