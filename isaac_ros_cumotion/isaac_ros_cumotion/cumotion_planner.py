@@ -567,9 +567,9 @@ class CumotionActionServer(Node):
             self.motion_gen.attach_external_objects_to_robot(
                 start_state,
                 objs,
-                surface_sphere_radius=0.005,
+                # surface_sphere_radius=0.005,
                 link_name=obj.link_name,
-                sphere_fit_type=SphereFitType.SAMPLE_SURFACE,
+                # sphere_fit_type=SphereFitType.SAMPLE_SURFACE,
                 world_objects_pose_offset=ee_pose,
             )
 
