@@ -47,7 +47,7 @@ def cumotion_params():
 
 def generate_launch_description():
     ur_moveit_launch_file = path.join(
-        get_package_share_directory('hello_moveit'),
+        get_package_share_directory('ur_moveit_config'),
         'launch',
         'ur_moveit.launch.py'
     )
