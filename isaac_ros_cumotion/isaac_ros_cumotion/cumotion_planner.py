@@ -711,6 +711,7 @@ class CumotionActionServer(Node):
 
         # attach object to end effector:
         objs = []
+        attached_link_name = ''
         for obj in scene.robot_state.attached_collision_objects:
             collision_objects, supported_objects = self.get_cumotion_collision_object(obj.object)
             if supported_objects:
@@ -726,6 +727,7 @@ class CumotionActionServer(Node):
                 # sphere_fit_type=SphereFitType.SAMPLE_SURFACE,
                 world_objects_pose_offset=ee_pose,
             )
+            attached_link_name = obj.link_name
 
         # publish marker
         if self.__publish_robot_as_spheres:
@@ -770,14 +772,19 @@ class CumotionActionServer(Node):
                 plan_req.goal_constraints[0].joint_constraints[x].joint_name
                 for x in range(len(plan_req.goal_constraints[0].joint_constraints))
             ]
-
-            goal_state = self.motion_gen.get_active_js(
-                CuJointState.from_position(
-                    position=self.tensor_args.to_device(goal_config).view(1, -1),
-                    joint_names=goal_jnames,
-                )
+            goal_state = CuJointState.from_position(
+                position=self.tensor_args.to_device(goal_config).view(1, -1),
+                joint_names=goal_jnames,
             )
-            goal_pose = self.motion_gen.compute_kinematics(goal_state).ee_pose.clone()
+
+            self.motion_gen.reset(reset_seed=False)
+            motion_gen_result = self.motion_gen.plan_single_js(
+                start_state,
+                goal_state,
+                MotionGenPlanConfig(max_attempts=5, enable_graph_attempt=1,
+                                    time_dilation_factor=time_dilation_factor),
+            )
+
         elif (
             len(plan_req.goal_constraints[0].position_constraints) > 0
             and len(plan_req.goal_constraints[0].orientation_constraints) > 0
@@ -823,18 +830,22 @@ class CumotionActionServer(Node):
                 )
                 result.error_code.val = MoveItErrorCodes.INVALID_LINK_NAME
                 return result
+
+            self.motion_gen.reset(reset_seed=False)
+            motion_gen_result = self.motion_gen.plan_single(
+                start_state,
+                goal_pose,
+                MotionGenPlanConfig(max_attempts=5, enable_graph_attempt=1,
+                                    time_dilation_factor=time_dilation_factor),
+            )
+
         else:
             self.get_logger().error('Goal constraints not supported')
         with self.lock:
             self.planner_busy = True
 
-        self.motion_gen.reset(reset_seed=False)
-        motion_gen_result = self.motion_gen.plan_single(
-            start_state,
-            goal_pose,
-            MotionGenPlanConfig(max_attempts=self.__max_attempts, enable_graph_attempt=1,
-                                time_dilation_factor=time_dilation_factor),
-        )
+        if attached_link_name:
+            self.motion_gen.detach_object_from_robot(attached_link_name)
         with self.lock:
             self.planner_busy = False
         result = MoveGroup.Result()
