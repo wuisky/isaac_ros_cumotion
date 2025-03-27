@@ -367,6 +367,45 @@ class CumotionActionServer(Node):
             rgb=[0.0, 1.0, 1.0, 1.0]
         )
 
+        # self.publish_robot_as_spheres()
+
+    def publish_robot_as_spheres(self):
+        # publish marker
+        if self.__publish_robot_as_spheres:
+            state = self.motion_gen.get_active_js(CuJointState.from_position(
+                position=self.tensor_args.to_device(self.__js_buffer['position']).unsqueeze(0),
+                joint_names=self.__js_buffer['joint_names'])
+            )
+            sph_list = self.motion_gen.kinematics.get_robot_as_spheres(state.position)
+
+            if len(sph_list) != 0:
+                markers = MarkerArray()
+                for si, s in enumerate(sph_list[0]):
+                    if not np.any(np.isnan(s.position)):
+                        marker = Marker()
+                        marker.header.frame_id = self.__robot_base_frame
+                        marker.header.stamp = self.get_clock().now().to_msg()
+                        marker.type = 2  # sphere
+                        marker.id = 10000 + si
+                        marker.action = 0  # add
+                        marker.pose.position.x = float(s.position[0])
+                        marker.pose.position.y = float(s.position[1])
+                        marker.pose.position.z = float(s.position[2])
+                        marker.pose.orientation.w = 1.0
+                        marker.pose.orientation.x = 0.0
+                        marker.pose.orientation.y = 0.0
+                        marker.pose.orientation.z = 0.0
+                        marker.color.r = 1.0
+                        marker.color.g = 1.0
+                        marker.color.b = 0.0
+                        marker.color.a = 0.5
+                        marker.scale.x = float(s.radius) * 2
+                        marker.scale.y = float(s.radius) * 2
+                        marker.scale.z = float(s.radius) * 2
+                        marker.lifetime = rclpy.duration.Duration(seconds=0.0).to_msg()  # forever
+                        markers.markers.append(marker)
+                self.__spheres_pub.publish(markers)
+
     def update_voxel_grid(self):
         self.get_logger().info('Calling ESDF service')
 
@@ -729,38 +768,7 @@ class CumotionActionServer(Node):
             )
             attached_link_name = obj.link_name
 
-        # publish marker
-        if self.__publish_robot_as_spheres:
-            sph_list = self.motion_gen.kinematics.get_robot_as_spheres(start_state.position)
-
-            if len(sph_list) != 0:
-                markers = MarkerArray()
-                for si, s in enumerate(sph_list[0]):
-                    if not np.any(np.isnan(s.position)):
-                        marker = Marker()
-                        marker.header.frame_id = self.__robot_base_frame
-                        marker.header.stamp = self.get_clock().now().to_msg()
-                        marker.type = 2  # sphere
-                        marker.id = 10000 + si
-                        marker.action = 0  # add
-                        marker.pose.position.x = float(s.position[0])
-                        marker.pose.position.y = float(s.position[1])
-                        marker.pose.position.z = float(s.position[2])
-                        marker.pose.orientation.w = 1.0
-                        marker.pose.orientation.x = 0.0
-                        marker.pose.orientation.y = 0.0
-                        marker.pose.orientation.z = 0.0
-                        marker.color.r = 1.0
-                        marker.color.g = 1.0
-                        marker.color.b = 0.0
-                        marker.color.a = 0.5
-                        marker.scale.x = float(s.radius) * 2
-                        marker.scale.y = float(s.radius) * 2
-                        marker.scale.z = float(s.radius) * 2
-                        marker.lifetime = rclpy.duration.Duration(seconds=0.0).to_msg()  # forever
-                        markers.markers.append(marker)
-                self.__spheres_pub.publish(markers)
-                self.get_logger().info('pub markers')
+        self.publish_robot_as_spheres()
 
         if len(plan_req.goal_constraints[0].joint_constraints) > 0:
             self.get_logger().info('Calculating goal pose from Joint target')
